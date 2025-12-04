@@ -2,3 +2,5 @@ __pycache__/
 .venv/
 uploads/
 .env
+fake_data.csv
+mock_data_gen.py
