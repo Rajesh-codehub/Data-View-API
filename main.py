@@ -49,9 +49,9 @@ import aiofiles
 from pathlib import Path
 
 # JWT Configuration (use .env in production)
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")
+SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES"))
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl = "login")
@@ -146,6 +146,14 @@ async def login(user: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == user.email))
 
     db_user = result.scalar_one_or_none()
+
+    # ✅ Check if user exists FIRST
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if db_user.status != "active":
         raise HTTPException(status_code=404, detail="User not found")
