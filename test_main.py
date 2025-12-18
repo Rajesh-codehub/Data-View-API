@@ -17,7 +17,8 @@ import pandas as pd
 from io import BytesIO
 
 # Import your app and models
-from main import app, get_current_user, hash_password, verify_password, create_access_token
+from utils.auth import hash_password, verify_password, create_access_token
+from main import app
 from models import Base, User, File as FileModel
 from dbconn import get_db
 
@@ -201,7 +202,7 @@ class TestAuthentication:
             "password": "securePass123"
         }
         
-        response = await client.post("/register", json=user_data)
+        response = await client.post("/auth/register", json=user_data)
         
         assert response.status_code == 201
         data = response.json()
@@ -219,7 +220,7 @@ class TestAuthentication:
             "password": "password123"
         }
         
-        response = await client.post("/register", json=user_data)
+        response = await client.post("/auth/register", json=user_data)
         
         assert response.status_code == 400
         assert "Email already registered" in response.json()["detail"]
@@ -233,7 +234,7 @@ class TestAuthentication:
             "password": "password123"
         }
         
-        response = await client.post("/register", json=user_data)
+        response = await client.post("/auth/register", json=user_data)
         
         assert response.status_code == 422  # Validation error
     
@@ -245,7 +246,7 @@ class TestAuthentication:
             "password": "testpassword123"
         }
         
-        response = await client.post("/login", json=login_data)
+        response = await client.post("/auth/login", json=login_data)
         
         assert response.status_code == 200
         data = response.json()
@@ -261,7 +262,7 @@ class TestAuthentication:
             "password": "wrongPassword"
         }
         
-        response = await client.post("/login", json=login_data)
+        response = await client.post("/auth/login", json=login_data)
         
         assert response.status_code == 401
         assert "Invalid credentials" in response.json()["detail"]
@@ -274,7 +275,7 @@ class TestAuthentication:
             "password": "password123"
         }
         
-        response = await client.post("/login", json=login_data)
+        response = await client.post("/auth/login", json=login_data)
         
         assert response.status_code in [401, 404]
     
@@ -296,7 +297,7 @@ class TestAuthentication:
             "password": "password123"
         }
         
-        response = await client.post("/login", json=login_data)
+        response = await client.post("/auth/login", json=login_data)
         
         assert response.status_code == 404
 
@@ -312,7 +313,7 @@ class TestFileUpload:
         files = {"file": ("test.csv", sample_csv_file, "text/csv")}
         
         response = await client.post(
-            "/upload_file",
+            "/files/upload_file",
             files=files,
             headers=auth_headers
         )
@@ -329,7 +330,7 @@ class TestFileUpload:
         files = {"file": ("test.xlsx", sample_excel_file, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
         
         response = await client.post(
-            "/upload_file",
+            "/files/upload_file",
             files=files,
             headers=auth_headers
         )
@@ -346,7 +347,7 @@ class TestFileUpload:
         files = {"file": ("test.txt", invalid_file, "text/plain")}
         
         response = await client.post(
-            "/upload_file",
+            "/files/upload_file",
             files=files,
             headers=auth_headers
         )
@@ -359,7 +360,7 @@ class TestFileUpload:
         """Test file upload without authentication"""
         files = {"file": ("test.csv", sample_csv_file, "text/csv")}
         
-        response = await client.post("/upload_file", files=files)
+        response = await client.post("/files/upload_file", files=files)
         
         assert response.status_code == 401
     
@@ -370,7 +371,7 @@ class TestFileUpload:
         files = {"file": ("corrupted.csv", corrupted_csv, "text/csv")}
         
         response = await client.post(
-            "/upload_file",
+            "/files/upload_file",
             files=files,
             headers=auth_headers
         )
@@ -385,7 +386,7 @@ class TestFileRead:
     """Test file reading functionality"""
     
     @pytest.mark.asyncio
-    @patch('main.redis_client')
+    @patch('routers.files.redis_client')
     async def test_read_file_success(self, mock_redis, client, auth_headers, uploaded_file, test_db):
         """Test successful file reading"""
         # Mock Redis to return None (no cache)
@@ -399,7 +400,7 @@ class TestFileRead:
         
         try:
             response = await client.get(
-                f"/read_file?file_id={uploaded_file.id}",
+                f"/files/read_file?file_id={uploaded_file.id}",
                 headers=auth_headers
             )
             
@@ -417,14 +418,14 @@ class TestFileRead:
     async def test_read_nonexistent_file(self, client, auth_headers):
         """Test reading non-existent file"""
         response = await client.get(
-            "/read_file?file_id=99999",
+            "/files/read_file?file_id=99999",
             headers=auth_headers
         )
         
         assert response.status_code == 404
     
     @pytest.mark.asyncio
-    @patch('main.redis_client')
+    @patch('routers.files.redis_client')
     async def test_read_file_with_pagination(self, mock_redis, client, auth_headers, uploaded_file):
         """Test file reading with pagination parameters"""
         mock_redis.get = AsyncMock(return_value=None)
@@ -436,7 +437,7 @@ class TestFileRead:
         
         try:
             response = await client.get(
-                f"/read_file?file_id={uploaded_file.id}&page=2&page_size=20",
+                f"/files/read_file?file_id={uploaded_file.id}&page=2&page_size=20",
                 headers=auth_headers
             )
             
@@ -449,7 +450,7 @@ class TestFileRead:
                 os.remove(uploaded_file.file_path)
     
     @pytest.mark.asyncio
-    @patch('main.redis_client')
+    @patch('routers.files.redis_client')
     async def test_read_file_from_cache(self, mock_redis, client, auth_headers, uploaded_file):
         """Test reading file from Redis cache"""
         cached_data = {
@@ -460,7 +461,7 @@ class TestFileRead:
         mock_redis.get = AsyncMock(return_value=json.dumps(cached_data))
         
         response = await client.get(
-            f"/read_file?file_id={uploaded_file.id}",
+            f"/files/read_file?file_id={uploaded_file.id}",
             headers=auth_headers
         )
         
@@ -477,18 +478,19 @@ class TestFileManagement:
     @pytest.mark.asyncio
     async def test_view_files_success(self, client, auth_headers, uploaded_file):
         """Test viewing user's files"""
-        response = await client.get("/view_files", headers=auth_headers)
+        response = await client.get("/files/view_files", headers=auth_headers)
         
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
         assert len(data) > 0
+        assert data[0]["status"] == "uploaded"
         assert data[0]["file_id"] == uploaded_file.id
     
     @pytest.mark.asyncio
     async def test_view_files_empty(self, client, auth_headers):
         """Test viewing files when user has none"""
-        response = await client.get("/view_files", headers=auth_headers)
+        response = await client.get("/files/view_files", headers=auth_headers)
         
         assert response.status_code == 200
         assert response.json() == []
@@ -502,7 +504,7 @@ class TestFileManagement:
             f.write("test content")
         
         try:
-            response = await client.delete(f"/delete_file/{uploaded_file.id}")
+            response = await client.delete(f"/files/delete_file/{uploaded_file.id}")
             
             assert response.status_code == 200
             data = response.json()
@@ -518,7 +520,7 @@ class TestFileManagement:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_file(self, client):
         """Test deleting non-existent file"""
-        response = await client.delete("/delete_file/99999")
+        response = await client.delete("/files/delete_file/99999")
         
         assert response.status_code == 404
 
@@ -531,7 +533,7 @@ class TestUserManagement:
     @pytest.mark.asyncio
     async def test_delete_user_success(self, client, auth_headers, test_user, test_db):
         """Test successful user deletion (soft delete)"""
-        response = await client.delete("/delete_user", headers=auth_headers)
+        response = await client.delete("/auth/delete_user", headers=auth_headers)
         
         assert response.status_code == 200
         data = response.json()
@@ -544,7 +546,7 @@ class TestUserManagement:
     @pytest.mark.asyncio
     async def test_delete_user_without_auth(self, client):
         """Test user deletion without authentication"""
-        response = await client.delete("/delete_user")
+        response = await client.delete("/auth/delete_user")
         
         assert response.status_code == 401
 
@@ -579,7 +581,7 @@ class TestIntegrationScenarios:
             "email": "integration@test.com",
             "password": "testPass123"
         }
-        response = await client.post("/register", json=user_data)
+        response = await client.post("/auth/register", json=user_data)
         assert response.status_code == 201
         
         # 2. Login
@@ -587,28 +589,28 @@ class TestIntegrationScenarios:
             "email": user_data["email"],
             "password": user_data["password"]
         }
-        response = await client.post("/login", json=login_data)
+        response = await client.post("/auth/login", json=login_data)
         assert response.status_code == 200
         token = response.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
         
         # 3. Upload file
         files = {"file": ("test.csv", sample_csv_file, "text/csv")}
-        response = await client.post("/upload_file", files=files, headers=headers)
+        response = await client.post("/files/upload_file", files=files, headers=headers)
         assert response.status_code == 200
         file_id = response.json()["file_id"]
         
         # 4. View files
-        response = await client.get("/view_files", headers=headers)
+        response = await client.get("/files/view_files", headers=headers)
         assert response.status_code == 200
         assert len(response.json()) == 1
         
         # 5. Delete file
-        response = await client.delete(f"/delete_file/{file_id}")
+        response = await client.delete(f"/files/delete_file/{file_id}")
         assert response.status_code == 200
         
         # 6. Delete user
-        response = await client.delete("/delete_user", headers=headers)
+        response = await client.delete("/auth/delete_user", headers=headers)
         assert response.status_code == 200
 
 
